@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+bin/
+dist/
+*.tar.gz
+*.zip
+coverage.out
+volumes/
+uploads/
+Отчёт*.md

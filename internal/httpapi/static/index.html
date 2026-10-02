@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f2ed">
+  <title>Files</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7a8 8 0 1 0 0 10M20 3v5h-5"/></symbol>
+  </svg>
+
+  <header>
+    <div class="shell header-inner">
+      <a class="brand" href="/" aria-label="Files home">
+        <svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>
+        Files
+      </a>
+      <div id="account" class="account" hidden>
+        <span id="current-user"></span>
+        <button id="logout" type="button" class="quiet">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="auth" class="auth card" hidden aria-labelledby="auth-title">
+      <p class="eyebrow">Private storage</p>
+      <h1 id="auth-title">Sign in</h1>
+      <form id="auth-form">
+        <label>Username<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+        <p id="auth-error" class="form-error" role="alert" hidden></p>
+        <button id="auth-submit" type="submit" class="wide"><span id="auth-submit-label">Sign in</span></button>
+      </form>
+      <button id="auth-switch" type="button" class="quiet auth-switch">Create account</button>
+    </section>
+
+    <section id="workspace" hidden aria-labelledby="files-title">
+      <div class="toolbar">
+        <div><p class="eyebrow">Library</p><h1 id="files-title">My files</h1></div>
+        <input id="file" type="file" aria-label="Choose a file to upload" hidden>
+        <button id="upload" type="button"><svg class="icon" aria-hidden="true"><use href="#icon-plus"/></svg><span id="upload-label">Upload</span></button>
+      </div>
+
+      <div class="list-heading">
+        <p id="list-status" class="muted" role="status" aria-live="polite">Loading…</p>
+        <button id="refresh" type="button" class="quiet"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>Refresh</button>
+      </div>
+
+      <div id="drop-zone" class="file-panel card">
+        <table>
+          <thead><tr><th>Name</th><th>Size</th><th>Added</th><th class="actions-heading">Actions</th></tr></thead>
+          <tbody id="files"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg>
+          <h2>No files yet</h2>
+          <p>Drop a file here or use Upload.</p>
+        </div>
+        <div class="drop-message" aria-hidden="true">Drop to upload</div>
+      </div>
+      <button id="more" type="button" class="secondary more" hidden>Load more</button>
+    </section>
+  </main>
+
+  <template id="file-row">
+    <tr>
+      <td class="name-cell"><div class="file-name"><span class="file-icon"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg></span><span class="file-label"></span></div></td>
+      <td class="file-size"></td>
+      <td class="file-date"></td>
+      <td class="actions-cell"><div class="file-actions">
+        <a class="download"><svg class="icon" aria-hidden="true"><use href="#icon-download"/></svg>Download</a>
+        <button type="button" class="quiet rename-action">Rename</button>
+        <button type="button" class="quiet delete-action">Delete</button>
+      </div></td>
+    </tr>
+  </template>
+
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden>
+    <span id="notice-message"></span><button id="notice-close" type="button" class="quiet" aria-label="Dismiss">×</button>
+  </div>
+
+  <dialog id="rename-dialog">
+    <form id="rename-form">
+      <h2>Rename file</h2>
+      <label>Name<input id="rename-name" maxlength="255" required></label>
+      <p id="rename-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="rename-dialog">Cancel</button><button type="submit">Save</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-dialog">
+    <form id="delete-form">
+      <h2>Delete file?</h2>
+      <p id="delete-name" class="delete-name"></p>
+      <p class="muted">This cannot be undone.</p>
+      <p id="delete-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="secondary" data-close="delete-dialog">Cancel</button><button type="submit" class="danger">Delete</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

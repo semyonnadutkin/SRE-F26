@@ -1,0 +1,78 @@
+x-app: &app
+  image: sre-f26-fileserver:local
+  build: .
+  env_file: .env
+
+services:
+  postgres:
+    image: postgres:18.6@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  s3:
+    image: chrislusf/seaweedfs:4.17@sha256:186de7ef977a20343ee9a5544073f081976a29e2d29ecf8379891e7bf177fbe9
+    restart: unless-stopped
+    command:
+      - server
+      - -ip=s3
+      - -dir=/data
+      - -volume.max=4
+      - -master.volumeSizeLimitMB=100
+      - -s3
+      - -s3.port=8333
+      - -filer
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?Set S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?Set S3_SECRET_KEY}
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
+    volumes:
+      - s3_data:/data
+    healthcheck:
+      test: [CMD, curl, -sS, -o, /dev/null, http://localhost:8333]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  migrate:
+    <<: *app
+    command: [migrate, up]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  bucket-init:
+    <<: *app
+    command: [bucket-init]
+    depends_on:
+      s3:
+        condition: service_healthy
+    restart: "no"
+
+  fileserver:
+    <<: *app
+    command: [serve]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-80}:${FILESERVER_PORT:-8080}"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      bucket-init:
+        condition: service_completed_successfully
+    stop_grace_period: 20s
+
+volumes:
+  postgres_data:
+  s3_data:
