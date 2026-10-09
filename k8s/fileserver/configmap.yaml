@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fileserver-config
+  namespace: fileserver
+  labels:
+    app: fileserver
+data:
+  FILESERVER_PORT: '8080'
+  APP_ORIGIN: http://127.0.0.1
+  S3_ENDPOINT: http://s3:8333
+  S3_REGION: us-east-1
+  S3_BUCKET: files
+  COOKIE_SECURE: 'false'
+  SESSION_TTL: 168h
+  MAX_FILE_BYTES: '52428800'

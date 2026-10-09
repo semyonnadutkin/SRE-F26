@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fileserver-migrate
+  namespace: fileserver
+spec:
+  backoffLimit: 12
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 600
+
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+
+      containers:
+      - name: migrate
+        image: sre-f26-fileserver:local
+        imagePullPolicy: IfNotPresent
+        args:
+        - migrate
+        - up
+
+        envFrom:
+        - secretRef:
+            name: fileserver-secret
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: '1'
+            memory: 256Mi
+
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault

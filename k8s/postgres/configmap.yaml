@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: fileserver
+  labels:
+    app: postgres
+data:
+  POSTGRES_USER: fileserver
+  POSTGRES_DB: fileserver

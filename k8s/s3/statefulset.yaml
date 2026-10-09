@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: s3
+  namespace: fileserver
+  labels:
+    app: s3
+spec:
+  serviceName: s3-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: s3
+  template:
+    metadata:
+      labels:
+        app: s3
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: s3
+        image: chrislusf/seaweedfs:4.17@sha256:186de7ef977a20343ee9a5544073f081976a29e2d29ecf8379891e7bf177fbe9
+        imagePullPolicy: IfNotPresent
+        args:
+        - server
+        - -ip=$(POD_NAME).s3-headless.fileserver.svc.cluster.local
+        - -ip.bind=0.0.0.0
+        - -dir=/data
+        - -master.dir=/data
+        - -volume.max=4
+        - -master.volumeSizeLimitMB=100
+        - -s3
+        - -s3.port=8333
+        - -filer
+        ports:
+        - name: s3
+          containerPort: 8333
+        - name: master
+          containerPort: 9333
+        - name: master-grpc
+          containerPort: 19333
+        - name: volume
+          containerPort: 8080
+        - name: volume-grpc
+          containerPort: 18080
+        - name: filer
+          containerPort: 8888
+        - name: filer-grpc
+          containerPort: 18888
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: S3_ACCESS_KEY
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: s3-secret
+              key: S3_SECRET_KEY
+        - name: WEED_MASTER_VOLUME_GROWTH_COPY_1
+          value: '1'
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: '1'
+            memory: 1Gi
+        startupProbe:
+          tcpSocket:
+            port: s3
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 60
+        readinessProbe:
+          tcpSocket:
+            port: s3
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /etc/seaweedfs
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: s3-config
+      enableServiceLinks: false
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi

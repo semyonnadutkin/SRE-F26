@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fileserver-audit
+  namespace: fileserver
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 600
+
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+
+      containers:
+      - name: audit
+        image: sre-f26-fileserver:local
+        imagePullPolicy: IfNotPresent
+        args:
+        - audit
+
+        envFrom:
+        - secretRef:
+            name: fileserver-secret
+        - configMapRef:
+            name: fileserver-config
+        - secretRef:
+            name: s3-secret
+
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: '1'
+            memory: 256Mi
+
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
