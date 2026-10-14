@@ -1,0 +1,59 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fileserver-cleanup-cron
+  namespace: fileserver
+spec:
+  schedule: '*/15 * * * *'
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 900
+
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+
+          containers:
+          - name: cleanup
+            image: sre-f26-fileserver:local
+            imagePullPolicy: IfNotPresent
+            args:
+            - cleanup
+
+            envFrom:
+            - secretRef:
+                name: fileserver-secret
+            - configMapRef:
+                name: fileserver-config
+            - secretRef:
+                name: s3-secret
+
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: '1'
+                memory: 256Mi
+
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3

@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+*secret*.yaml
+!*secret*.example.yaml
 bin/
 dist/
 *.tar.gz
@@ -8,3 +10,4 @@ dist/
 coverage.out
 volumes/
 uploads/
+__pycache__/
