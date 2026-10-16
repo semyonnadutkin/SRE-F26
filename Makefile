@@ -1,6 +1,5 @@
 .PHONY: setup check up down cleanup audit k8s-init k8s-apply
 
-# Override with KUBECTL=kubectl for another configured cluster.
 KUBECTL ?= minikube kubectl --
 
 setup:
@@ -37,3 +36,6 @@ k8s-apply: k8s-init
 	$(KUBECTL) apply -k k8s
 	$(KUBECTL) -n fileserver rollout restart deployment/fileserver-deployment
 	$(KUBECTL) -n fileserver rollout status deployment/fileserver-deployment --timeout=300s
+	$(KUBECTL) -n observability rollout status deployment/victorialogs --timeout=300s
+	$(KUBECTL) -n observability rollout status daemonset/vector --timeout=300s
+	$(KUBECTL) -n observability rollout status deployment/grafana --timeout=300s
