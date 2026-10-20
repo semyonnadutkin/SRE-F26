@@ -18,19 +18,24 @@ make up
 
 ### Kubernetes
 
-**Требования:** Minikube 1.39.0+, Docker, Make, Python3 + PyYAML
+**Требования:** Minikube 1.39.0+, Docker, Make, Python3 + зависимости из `scripts/requirements.txt`.
 
-**Установка PyYAML в `.venv`:** 
+**Установка Python-зависимостей в `.venv`:**
 ```
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install scripts/requirements.txt
+python3 -m pip install -r scripts/requirements.txt
 ```
 
 **Запуск:**
 ```bash
 # Запускаем кластер
-minikube start --driver=docker
+# Пробрасываем порты:
+#   - Grafana:      3000:30000
+#   - VictoriaLogs: 9428:30001 
+minikube start --driver=docker      \
+    --ports=127.0.0.1:3000:30000    \
+    --ports=127.0.0.1:9428:30001
 
 # Добавляем Ingress
 minikube addons enable ingress

@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victorialogs
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: victorialogs
+  template:
+    metadata:
+      labels:
+        app: victorialogs
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: victorialogs
+          image: victoriametrics/victoria-logs:v1.53.0
+          args:
+            - -storageDataPath=/storage
+            - -retentionPeriod=7d
+            - -httpListenAddr=:9428
+          ports:
+            - name: http
+              containerPort: 9428
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          volumeMounts:
+            - name: data
+              mountPath: /storage
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: victorialogs-data

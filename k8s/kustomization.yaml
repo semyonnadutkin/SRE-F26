@@ -8,3 +8,4 @@ resources:
   - s3/
   - networking/ingress.yaml
   - jobs/fileserver-cleanup.yaml
+  - observability/
