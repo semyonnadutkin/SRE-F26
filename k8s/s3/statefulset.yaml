@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         app: s3
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9324"
+        prometheus.io/path: "/metrics"
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 60
@@ -35,10 +39,13 @@ spec:
         - -master.volumeSizeLimitMB=100
         - -s3
         - -s3.port=8333
+        - -metricsPort=9324
         - -filer
         ports:
         - name: s3
           containerPort: 8333
+        - name: metrics
+          containerPort: 9324
         - name: master
           containerPort: 9333
         - name: master-grpc

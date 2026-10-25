@@ -28,6 +28,8 @@ type userContextKey struct{}
 const dummyPasswordHash = "$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW"
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
+	defer observeOperation("register")()
+
 	input, ok := readCredentials(w, r)
 	if !ok || !a.authLimit(w, r, input.Username, "register", 5) {
 		return
@@ -66,11 +68,15 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	registrationsTotal.Inc()
+
 	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusCreated, user)
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
+	defer observeOperation("login")()
+
 	input, ok := readCredentials(w, r)
 	if !ok || !a.authLimit(w, r, input.Username, "login", 10) {
 		return
@@ -110,6 +116,8 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, "commit login", err)
 		return
 	}
+
+	loginsTotal.Inc()
 
 	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusOK, user)

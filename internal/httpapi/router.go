@@ -3,12 +3,15 @@ package httpapi
 import (
 	"context"
 	"embed"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/semyonnadutkin/SRE-F26/internal/config"
 	"github.com/semyonnadutkin/SRE-F26/internal/storage"
 )
@@ -29,6 +32,7 @@ func NewHandler(api *API) http.Handler {
 	mux.HandleFunc("GET /readyz", api.ready)
 	mux.HandleFunc("POST /api/auth/register", api.register)
 	mux.HandleFunc("POST /api/auth/login", api.login)
+	mux.Handle("GET /metrics", promhttp.Handler())
 	mux.Handle("POST /api/auth/logout", api.requireUser(api.logout))
 	mux.Handle("GET /api/me", api.requireUser(api.me))
 	mux.Handle("GET /api/files", api.requireUser(api.listFiles))
@@ -50,6 +54,25 @@ func NewHandler(api *API) http.Handler {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "" {
+			name = "."
+		}
+
+		if _, err := fs.Stat(static, name); errors.Is(err, fs.ErrNotExist) {
+			page, err := fs.ReadFile(static, "404.html")
+			if err != nil {
+				api.internal(w, "read_404_page", err)
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusNotFound)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(page)
+			}
+			return
+		}
 		files.ServeHTTP(w, r)
 	})
 	return api.middleware(mux)

@@ -11,3 +11,4 @@ coverage.out
 volumes/
 uploads/
 __pycache__/
+.venv

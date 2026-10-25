@@ -18,32 +18,28 @@ make up
 
 ### Kubernetes
 
-**Требования:** Minikube 1.39.0+, Docker, Make, Python3 + зависимости из `scripts/requirements.txt`.
+**Требования:** Minikube 1.39.0+, Docker, Make, Python3.
 
-**Установка Python-зависимостей в `.venv`:**
-```
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r scripts/requirements.txt
-```
+#### Первый запуск
+`scripts/install.sh`:
+- Проверяет наличие требуемых компонент
+- Активирует виртуальное окружение Python3 и подгружает зависимости
+- Запускает Minikube с пробросом портов для Ingress, VictoriaMetrics, VictoriaLogs, Grafana
+- Собирает Docker изображение и подгружает его в Minikube
+- Вызывает `make k8s-apply`
 
-**Запуск:**
 ```bash
-# Запускаем кластер
-# Пробрасываем порты:
-#   - Grafana:      3000:30000
-#   - VictoriaLogs: 9428:30001 
-minikube start --driver=docker      \
-    --ports=127.0.0.1:3000:30000    \
-    --ports=127.0.0.1:9428:30001
+bash scripts/install.sh
+```
 
-# Добавляем Ingress
-minikube addons enable ingress
+#### Применение новых манифестов
+_Для применения манифестов Minikube должен быть запущен скриптом `scripts/install.sh`._
 
-# Собираем и загружаем изображение
-docker build -t sre-f26-fileserver:local .
-minikube image load sre-f26-fileserver:local
-
-# Генерируем секреты и применяем манифесты
+```bash
 make k8s-apply
+```
+
+#### Сборка и загрузка нового изображения
+```bash
+make k8s-update-image
 ```

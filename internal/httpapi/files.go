@@ -91,6 +91,8 @@ func (a *API) getFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
+	defer observeOperation("upload")()
+
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if !validFileName(name) {
 		problem(w, 400, "name", "File name must contain 1-255 characters without path separators.")
@@ -179,6 +181,8 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	uploadsTotal.Inc()
+
 	w.Header().Set("Location", "/api/files/"+strconv.FormatInt(file.ID, 10))
 	writeJSON(w, 201, file)
 }
@@ -211,6 +215,8 @@ func (a *API) renameFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) downloadFile(w http.ResponseWriter, r *http.Request) {
+	defer observeOperation("download")()
+
 	id, ok := fileID(w, r)
 	if !ok {
 		return
@@ -237,9 +243,14 @@ func (a *API) downloadFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": file.Name}))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10))
-	if _, err = io.Copy(w, object); err != nil {
+	n, err := io.Copy(w, object)
+	if err != nil || n != file.Size {
 		a.Log.Error("download interrupted", "file_id", file.ID)
 		return
+	}
+
+	if r.Method == http.MethodGet {
+		downloadsTotal.Inc()
 	}
 }
 
