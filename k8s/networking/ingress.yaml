@@ -8,6 +8,11 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "660"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "660"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location = /metrics {
+        error_page 403 /403.html;
+        return 403;
+      }
 spec:
   ingressClassName: nginx
   rules:
