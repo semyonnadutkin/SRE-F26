@@ -31,6 +31,7 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 	limit := 20
 	var before int64
 	var err error
+
 	if s := r.URL.Query().Get("limit"); s != "" {
 		limit, err = strconv.Atoi(s)
 		if err != nil || limit < 1 || limit > 100 {
@@ -45,6 +46,7 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
 	rows, err := a.DB.Query(r.Context(), "SELECT "+fileColumns+` FROM files
   WHERE user_id=$1 AND state='ready' AND ($2::bigint=0 OR id<$2)
   ORDER BY id DESC LIMIT $3`, currentUser(r).ID, before, limit+1)
@@ -74,7 +76,12 @@ func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 		lastID := items[len(items)-1].ID
 		next = &lastID
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "next_before": next, "max_file_bytes": a.Config.MaxFileBytes})
+
+	writeJSON(w, 200, map[string]any{
+		"items":          items,
+		"next_before":    next,
+		"max_file_bytes": a.Config.MaxFileBytes,
+	})
 }
 
 func (a *API) getFile(w http.ResponseWriter, r *http.Request) {
@@ -82,16 +89,25 @@ func (a *API) getFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	file, err := scanFile(a.DB.QueryRow(r.Context(), "SELECT "+fileColumns+" FROM files WHERE id=$1 AND user_id=$2 AND state='ready'", id, currentUser(r).ID))
+
+	file, err := scanFile(a.DB.QueryRow(
+		r.Context(),
+		"SELECT "+fileColumns+" FROM files WHERE id=$1 AND user_id=$2 AND state='ready'",
+		id,
+		currentUser(r).ID,
+	))
 	if err != nil {
 		a.fileError(w, err, "get_file")
 		return
 	}
+
 	writeJSON(w, 200, file)
 }
 
 func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
-	defer observeOperation("upload")()
+	response, collectMetrics := trackOperation(w, "upload")
+	defer collectMetrics()
+	w = response
 
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if !validFileName(name) {
@@ -102,9 +118,11 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		problem(w, 413, "file_too_large", "File exceeds the size limit.")
 		return
 	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, a.Config.MaxFileBytes+1)
 	limited := &sizeReader{reader: r.Body, remaining: a.Config.MaxFileBytes}
 	reader := bufio.NewReader(limited)
+
 	sample, err := reader.Peek(512)
 	if err != nil && !errors.Is(err, io.EOF) {
 		if errors.Is(err, errFileTooLarge) {
@@ -125,7 +143,8 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	// Commit the reservation before S3 writes so a crash leaves a recoverable operation.
 	file, err := scanFile(a.DB.QueryRow(r.Context(), `INSERT INTO files(user_id,name,storage_key,content_type,size_bytes,state)
-  VALUES($1,$2,$3,$4,0,'uploading') RETURNING `+fileColumns, currentUser(r).ID, name, key, contentType))
+  VALUES($1,$2,$3,$4,0,'uploading') RETURNING `+fileColumns,
+		currentUser(r).ID, name, key, contentType))
 	if err != nil {
 		a.internal(w, "reserve_upload", err)
 		return
@@ -137,6 +156,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
+
 	var state string
 	err = tx.QueryRow(r.Context(), "SELECT state FROM files WHERE id=$1 FOR UPDATE", file.ID).Scan(&state)
 	if err != nil {
@@ -160,7 +180,6 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		reader,
 		sizeHint,
 	)
-
 	if err != nil {
 		// Keep the durable uploading row for cleanup. S3 SDK attempts AbortMultipartUpload on failure.
 		if errors.Is(err, errFileTooLarge) {
@@ -171,7 +190,12 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	file, err = scanFile(tx.QueryRow(r.Context(), "UPDATE files SET size_bytes=$1,state='ready',updated_at=now() WHERE id=$2 RETURNING "+fileColumns, size, file.ID))
+	file, err = scanFile(tx.QueryRow(
+		r.Context(),
+		"UPDATE files SET size_bytes=$1,state='ready',updated_at=now() WHERE id=$2 RETURNING "+fileColumns,
+		size,
+		file.ID,
+	))
 	if err != nil {
 		a.internal(w, "finish_upload", err)
 		return
@@ -180,11 +204,11 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, "upload_commit", err)
 		return
 	}
-
-	uploadsTotal.Inc()
+	uploadedBytesTotal.Add(float64(size))
 
 	w.Header().Set("Location", "/api/files/"+strconv.FormatInt(file.ID, 10))
-	writeJSON(w, 201, file)
+	writeJSON(w, http.StatusCreated, file)
+	response.success = true
 }
 
 func (a *API) renameFile(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +223,7 @@ func (a *API) renameFile(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
+
 	input.Name = strings.TrimSpace(input.Name)
 	if !validFileName(input.Name) {
 		problem(w, 400, "name", "File name must contain 1–255 characters without path separators.")
@@ -206,16 +231,22 @@ func (a *API) renameFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	file, err := scanFile(a.DB.QueryRow(r.Context(), `UPDATE files SET name=$1,updated_at=now()
-  WHERE id=$2 AND user_id=$3 AND state='ready' RETURNING `+fileColumns, input.Name, id, currentUser(r).ID))
+  WHERE id=$2 AND user_id=$3 AND state='ready' RETURNING `+fileColumns,
+		input.Name, id, currentUser(r).ID))
 	if err != nil {
 		a.fileError(w, err, "rename_file")
 		return
 	}
+
 	writeJSON(w, 200, file)
 }
 
 func (a *API) downloadFile(w http.ResponseWriter, r *http.Request) {
-	defer observeOperation("download")()
+	response, collectMetrics := trackOperation(w, "download")
+	if r.Method == http.MethodGet {
+		defer collectMetrics()
+		w = response
+	}
 
 	id, ok := fileID(w, r)
 	if !ok {
@@ -228,30 +259,43 @@ func (a *API) downloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
+
 	// A shared row lock prevents deletion halfway through a live download.
-	file, err := scanFile(tx.QueryRow(r.Context(), "SELECT "+fileColumns+" FROM files WHERE id=$1 AND user_id=$2 AND state='ready' FOR SHARE", id, currentUser(r).ID))
+	file, err := scanFile(tx.QueryRow(
+		r.Context(),
+		"SELECT "+fileColumns+" FROM files WHERE id=$1 AND user_id=$2 AND state='ready' FOR SHARE",
+		id,
+		currentUser(r).ID,
+	))
 	if err != nil {
 		a.fileError(w, err, "download_metadata")
 		return
 	}
+
 	object, err := a.Store.Get(r.Context(), file.StorageKey)
 	if err != nil {
 		a.internal(w, "download_object", err)
 		return
 	}
 	defer object.Close()
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": file.Name}))
+
+	w.Header().Set("Content-Disposition", mime.FormatMediaType(
+		"attachment",
+		map[string]string{"filename": file.Name},
+	))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10))
+
 	n, err := io.Copy(w, object)
+	if r.Method == http.MethodGet {
+		downloadedBytesTotal.Add(float64(n))
+	}
 	if err != nil || n != file.Size {
 		a.Log.Error("download interrupted", "file_id", file.ID)
 		return
 	}
 
-	if r.Method == http.MethodGet {
-		downloadsTotal.Inc()
-	}
+	response.success = true
 }
 
 func (a *API) deleteFile(w http.ResponseWriter, r *http.Request) {
@@ -259,10 +303,12 @@ func (a *API) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
 	// Persist deletion intent; retries can finish it even when S3 or the process fails.
 	var key string
 	err := a.DB.QueryRow(r.Context(), `UPDATE files SET state='deleting',updated_at=now()
-  WHERE id=$1 AND user_id=$2 AND state IN ('ready','deleting') RETURNING storage_key`, id, currentUser(r).ID).Scan(&key)
+  WHERE id=$1 AND user_id=$2 AND state IN ('ready','deleting') RETURNING storage_key`,
+		id, currentUser(r).ID).Scan(&key)
 	if err != nil {
 		a.fileError(w, err, "mark_delete")
 		return
@@ -274,7 +320,12 @@ func (a *API) deleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(context.Background())
-	err = tx.QueryRow(r.Context(), "SELECT storage_key FROM files WHERE id=$1 AND user_id=$2 AND state='deleting' FOR UPDATE", id, currentUser(r).ID).Scan(&key)
+
+	err = tx.QueryRow(
+		r.Context(),
+		"SELECT storage_key FROM files WHERE id=$1 FOR UPDATE",
+		id,
+	).Scan(&key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		w.WriteHeader(204)
 		return
@@ -283,6 +334,7 @@ func (a *API) deleteFile(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, "delete_lock", err)
 		return
 	}
+
 	if err = a.Store.Delete(r.Context(), key); err != nil {
 		a.internal(w, "delete_object", err)
 		return
@@ -296,12 +348,22 @@ func (a *API) deleteFile(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, "delete_commit", err)
 		return
 	}
+
 	w.WriteHeader(204)
 }
 
 func scanFile(row pgx.Row) (File, error) {
 	var file File
-	err := row.Scan(&file.ID, &file.UserID, &file.Name, &file.StorageKey, &file.ContentType, &file.Size, &file.CreatedAt, &file.UpdatedAt)
+	err := row.Scan(
+		&file.ID,
+		&file.UserID,
+		&file.Name,
+		&file.StorageKey,
+		&file.ContentType,
+		&file.Size,
+		&file.CreatedAt,
+		&file.UpdatedAt,
+	)
 	return file, err
 }
 
