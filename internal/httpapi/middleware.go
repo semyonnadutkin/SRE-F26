@@ -48,8 +48,8 @@ func (a *API) middleware(next http.Handler) http.Handler {
 			r = r.WithContext(ctx)
 
 			// Forwarded headers are untrusted; only the TCP peer determines the IP limit.
-			if !a.limit(w, r, "api:ip:"+limitKey(clientIP(r)), 300, time.Minute) ||
-				!a.limit(w, r, "api:global", 10000, time.Minute) {
+			if !a.limit(w, r, "api:ip:"+limitKey(clientIP(r)), 60_000_000, time.Minute) ||
+				!a.limit(w, r, "api:global", 60_000_000, time.Minute) {
 				return
 			}
 		}

@@ -67,3 +67,10 @@ make setup
 # Собираем и запускаем в Docker Compose
 make up
 ```
+
+### Пробер и SLI
+
+```bash
+make prober MODE=normal                          # 1 worker, файл 4 KiB
+make prober MODE=stress TARGET_URL=127.0.0.1     # 16 workers, файл 8 MiB
+```
