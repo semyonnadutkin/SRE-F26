@@ -14,3 +14,4 @@ configMapGenerator:
   - name: fileserver-logs-dashboard
     files:
       - fileserver-logs.json=dashboards/fileserver-logs.json
+      - fileserver-slo.json=dashboards/fileserver-slo.json

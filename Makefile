@@ -1,7 +1,10 @@
-.PHONY: setup check up down cleanup audit k8s-init k8s-apply k8s-victoriametrics k8s-update-image
+.PHONY: setup check up down cleanup audit prober k8s-init k8s-apply k8s-victoriametrics k8s-update-image
 
 KUBECTL ?= minikube kubectl --
 HELM ?= helm
+MODE ?= normal
+TARGET_URL ?= 127.0.0.1
+export TARGET_URL
 
 # VictoriaMetrics-related variables
 VM_CHART_VERSION := 0.49.0
@@ -22,6 +25,8 @@ cleanup:
 	docker compose run --rm fileserver cleanup
 audit:
 	docker compose run --rm fileserver audit
+prober:
+	python3 scripts/prober/main.py $(MODE)
 
 # Prepare dependencies before starting one-off database/storage initialization.
 k8s-init:

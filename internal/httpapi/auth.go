@@ -28,7 +28,9 @@ type userContextKey struct{}
 const dummyPasswordHash = "$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW"
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
-	defer observeOperation("register")()
+	response, collectMetrics := trackOperation(w, "register")
+	defer collectMetrics()
+	w = response
 
 	input, ok := readCredentials(w, r)
 	if !ok || !a.authLimit(w, r, input.Username, "register", 5) {
@@ -68,14 +70,15 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	registrationsTotal.Inc()
-
 	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusCreated, user)
+	response.success = true
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
-	defer observeOperation("login")()
+	response, collectMetrics := trackOperation(w, "login")
+	defer collectMetrics()
+	w = response
 
 	input, ok := readCredentials(w, r)
 	if !ok || !a.authLimit(w, r, input.Username, "login", 10) {
@@ -117,13 +120,16 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loginsTotal.Inc()
-
 	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusOK, user)
+	response.success = true
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
+	response, finish := trackOperation(w, "logout")
+	defer finish()
+	w = response
+
 	cookie, _ := r.Cookie("session")
 	if _, err := a.DB.Exec(r.Context(), "DELETE FROM sessions WHERE token_hash=$1", tokenHash(cookie.Value)); err != nil {
 		a.internal(w, "logout", err)
@@ -131,6 +137,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	a.setSessionCookie(w, "")
 	w.WriteHeader(http.StatusNoContent)
+	response.success = true
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request) {

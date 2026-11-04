@@ -11,13 +11,9 @@ import (
 
 func (a *API) authLimit(w http.ResponseWriter, r *http.Request, username, action string, accountLimit int) bool {
 	// Per-account state survives new sessions and is shared by every application instance.
-	globalLimit := 60
-	if action == "register" {
-		globalLimit = 20
-	}
 	return a.limit(w, r, action+":user:"+limitKey(username), accountLimit, 10*time.Minute) &&
-		a.limit(w, r, action+":ip:"+limitKey(clientIP(r)), 30, 10*time.Minute) &&
-		a.limit(w, r, action+":global", globalLimit, time.Minute)
+		a.limit(w, r, action+":ip:"+limitKey(clientIP(r)), 60_000_000, time.Minute) &&
+		a.limit(w, r, action+":global", 60_000_000, time.Minute)
 }
 
 func (a *API) limit(w http.ResponseWriter, r *http.Request, key string, maximum int, window time.Duration) bool {

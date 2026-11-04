@@ -4,24 +4,41 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/minio/minio-go/v7"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/semyonnadutkin/SRE-F26/internal/config"
-	"github.com/semyonnadutkin/SRE-F26/internal/storage"
 )
 
 //go:embed static/*
 var assets embed.FS
 
+type database interface {
+	Begin(context.Context) (pgx.Tx, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Ping(context.Context) error
+}
+
+type objectStore interface {
+	Put(context.Context, string, string, io.Reader, int64) (int64, error)
+	Get(context.Context, string) (*minio.Object, error)
+	Delete(context.Context, string) error
+	Ready(context.Context) error
+}
+
 type API struct {
-	DB     *pgxpool.Pool
-	Store  *storage.Store
+	DB     database
+	Store  objectStore
 	Config config.Config
 	Log    *slog.Logger
 }
