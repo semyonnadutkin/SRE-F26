@@ -1,0 +1,113 @@
+role: Agent
+
+image:
+  tag: 0.49.0-debian
+
+service:
+  enabled: false
+
+serviceHeadless:
+  enabled: false
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 256Mi
+
+persistence:
+  hostPath:
+    enabled: true
+    path: /var/lib/fileserver-vector
+
+defaultVolumes:
+  - name: pod-logs
+    hostPath:
+      path: /var/log/pods
+      type: Directory
+
+defaultVolumeMounts:
+  - name: pod-logs
+    mountPath: /var/log/pods
+    readOnly: true
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8686
+  periodSeconds: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8686
+  periodSeconds: 30
+
+customConfig:
+  data_dir: /var/lib/vector
+
+  api:
+    enabled: true
+    address: 0.0.0.0:8686
+
+  sources:
+    fileserver:
+      type: kubernetes_logs
+      self_node_name: ${VECTOR_SELF_NODE_NAME}
+      extra_field_selector: metadata.namespace=fileserver
+      extra_label_selector: app=fileserver
+      glob_minimum_cooldown_ms: 1000
+
+  transforms:
+    application_json:
+      type: remap
+      inputs: [fileserver]
+      source: |
+        app, err = parse_json(.message)
+        if err == null && is_object(app) {
+          . = merge!(., app)
+        }
+        ."service.name" = "fileserver"
+        if !exists(.level) { .level = "info" }
+        del(.source_type)
+
+  sinks:
+    victorialogs:
+      type: elasticsearch
+      inputs: [application_json]
+      endpoints:
+        - http://victorialogs.observability.svc.cluster.local:9428/insert/elasticsearch/
+      api_version: v8
+      mode: bulk
+      compression: gzip
+      healthcheck:
+        enabled: false
+      query:
+        _msg_field: message
+        _time_field: timestamp
+        _stream_fields: service.name,kubernetes.pod_namespace,kubernetes.container_name
+      batch:
+        timeout_secs: 1
+      buffer:
+        type: disk
+        max_size: 268435488
+        when_full: block

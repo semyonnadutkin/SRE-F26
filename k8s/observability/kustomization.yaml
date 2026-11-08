@@ -3,6 +3,3 @@ kind: Kustomization
 namespace: observability
 resources:
   - namespace.yaml
-  - victorialogs/
-  - vector/
-  - grafana/

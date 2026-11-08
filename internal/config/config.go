@@ -92,7 +92,7 @@ func validOrigin(value *url.URL) bool {
 func DatabaseURL() (string, error) {
 	connection := os.Getenv("DATABASE_URL")
 	if connection == "" {
-		return "", errors.New("DATABASE_URL is required; run scripts/setup_env.py to populate .env")
+		return "", errors.New("DATABASE_URL is required")
 	}
 	parsed, err := url.Parse(connection)
 	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Host == "" || parsed.Path == "" {

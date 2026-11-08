@@ -190,6 +190,55 @@ def setup_locked(directory):
     return changed
 
 
+def setup_telegram(directory):
+    """Create the Alertmanager Telegram Secret only once."""
+    path = Path(directory) / 'observability/alertmanager/secret.yaml'
+    if path.is_symlink():
+        raise ValueError('Telegram Secret must not be a symbolic link.')
+
+    if path.exists():
+        manifest = yaml.safe_load(path.read_text())
+        if (not isinstance(manifest, dict)
+                or manifest.get('kind') != 'Secret'
+                or manifest.get('metadata') != {
+                    'name': 'alertmanager-telegram',
+                    'namespace': 'observability',
+                }):
+            raise ValueError('Invalid existing Telegram Secret.')
+        credentials = manifest.get('stringData')
+        if not isinstance(credentials, dict):
+            raise ValueError('Invalid existing Telegram credentials.')
+    else:
+        credentials = {
+            'bot_token': input('Telegram bot token: ').strip(),
+            'chat_id': input('Telegram Chat ID: ').strip(),
+        }
+
+    token = credentials.get('bot_token')
+    chat_id = credentials.get('chat_id')
+    if (not isinstance(token, str) or not token
+            or not isinstance(chat_id, str)
+            or not chat_id.lstrip('-').isdigit()
+            or int(chat_id) == 0):
+        raise ValueError('Invalid Telegram bot token or Chat ID.')
+
+    if not path.exists():
+        write_secret(path, {
+            'apiVersion': 'v1',
+            'kind': 'Secret',
+            'metadata': {
+                'name': 'alertmanager-telegram',
+                'namespace': 'observability',
+            },
+            'type': 'Opaque',
+            'stringData': credentials,
+        })
+        print('Telegram Secret created (0600).')
+    else:
+        path.chmod(0o600)
+        print('Existing Telegram Secret kept.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=DEFAULT_DIRECTORY)
@@ -201,6 +250,10 @@ def main():
         raise SystemExit('Cannot create or validate Kubernetes secrets. Check permissions '
                          'or restore the original files; existing credentials were not overwritten.') from None
     print('Service secret.yaml files created (0600).' if created else 'Existing YAML secrets validated and kept.')
+    try:
+        setup_telegram(args.directory)
+    except (OSError, ValueError, yaml.YAMLError, EOFError):
+        raise SystemExit('Cannot create or validate Telegram Secret; check credentials or file.') from None
 
 
 if __name__ == '__main__':

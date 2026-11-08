@@ -1,0 +1,38 @@
+serviceAccount:
+  automountToken: false
+
+alertmanager:
+  enabled: false
+
+server:
+  fullnameOverride: vmalert
+  replicaCount: 1
+
+  http:
+    - name: http
+      value: ":8880"
+      primary: true
+
+  service:
+    type: ClusterIP
+    clusterIP: ""
+    servicePort: 8880
+
+  datasource:
+    url: http://vmsingle-victoria-metrics-single-server.observability.svc.cluster.local:8428
+
+  remoteRead:
+    url: http://vmsingle-victoria-metrics-single-server.observability.svc.cluster.local:8428
+
+  remoteWrite:
+    url: http://vmsingle-victoria-metrics-single-server.observability.svc.cluster.local:8428
+
+  notifier:
+    url: http://alertmanager.observability.svc.cluster.local:9093
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi

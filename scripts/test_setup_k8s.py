@@ -3,10 +3,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
-from setup_k8s import SECRET_PATHS, new_bundle, setup, validate_bundle
+from setup_k8s import SECRET_PATHS, new_bundle, setup, setup_telegram, validate_bundle
 
 
 def read_bundle(directory):
@@ -103,6 +104,65 @@ class KubernetesSecretTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 setup(root)
             self.assertEqual(target.read_text(), 'unchanged')
+
+    def test_telegram_secret_created_with_correct_data_and_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch('builtins.input', side_effect=['123456:bot-token', '-1001234567890']) as prompt:
+                setup_telegram(root)
+            self.assertEqual(prompt.call_count, 2)
+
+            path = root / 'observability/alertmanager/secret.yaml'
+            self.assertEqual(yaml.safe_load(path.read_text()), {
+                'apiVersion': 'v1',
+                'kind': 'Secret',
+                'metadata': {
+                    'name': 'alertmanager-telegram',
+                    'namespace': 'observability',
+                },
+                'type': 'Opaque',
+                'stringData': {
+                    'bot_token': '123456:bot-token',
+                    'chat_id': '-1001234567890',
+                },
+            })
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_telegram_secret_reused_without_prompt_or_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch('builtins.input', side_effect=['123456:bot-token', '123456789']):
+                setup_telegram(root)
+            path = root / 'observability/alertmanager/secret.yaml'
+            original = path.read_bytes()
+            path.chmod(0o644)
+
+            with patch('builtins.input', side_effect=AssertionError('Unexpected prompt')):
+                setup_telegram(root)
+
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_invalid_telegram_credentials_do_not_create_secret(self):
+        for token, chat_id in [('', '123'), ('123456:token', ''),
+                               ('123456:token', 'abc'), ('123456:token', '0')]:
+            with self.subTest(token=token, chat_id=chat_id):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    with patch('builtins.input', side_effect=[token, chat_id]):
+                        with self.assertRaises(ValueError):
+                            setup_telegram(root)
+                    self.assertFalse((root / 'observability/alertmanager/secret.yaml').exists())
+
+    def test_invalid_existing_telegram_secret_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'observability/alertmanager/secret.yaml'
+            path.parent.mkdir(parents=True)
+            path.write_text('kind: ConfigMap\n')
+            with patch('builtins.input', side_effect=AssertionError('Unexpected prompt')):
+                with self.assertRaises(ValueError):
+                    setup_telegram(Path(directory))
+            self.assertEqual(path.read_text(), 'kind: ConfigMap\n')
 
 
 if __name__ == '__main__':

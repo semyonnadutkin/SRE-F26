@@ -26,16 +26,11 @@ fi
 
 # Install the setup dependencies
 python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r scripts/requirements.txt
+.venv/bin/python -m pip install -r scripts/requirements.txt
 
 
 # Start the cluster
-minikube start --driver=docker      \
-    --ports=127.0.0.1:80:80         \
-    --ports=127.0.0.1:3000:30000    \
-    --ports=127.0.0.1:9428:30001    \
-    --ports=127.0.0.1:8428:30002
+minikube start --driver=docker --ports=127.0.0.1:80:80
 
 # Add an ingress
 minikube addons enable ingress
@@ -62,5 +57,5 @@ docker build -t sre-f26-fileserver:local .
 minikube image load sre-f26-fileserver:local
 
 
-# Apply k8s manifests
-make k8s-apply
+# Deploy the FileServer
+make k8s-deploy

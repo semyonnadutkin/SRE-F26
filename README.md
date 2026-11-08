@@ -19,7 +19,7 @@
 **Визуализация:** Grafana
 
 **Контейнеризация:** Docker  
-**Оркестрация:** Kubernetes / Docker Compose
+**Оркестрация:** Kubernetes
 
 ### Диаграмма
 
@@ -27,50 +27,77 @@
 
 ## Запуск
 
-### Kubernetes
+**Требования:** Bash, Minikube 1.39.0+, Helm, Docker, Make, Python3.
 
-**Требования:** Minikube 1.39.0+, Helm, Docker, Make, Python3.
+### Первый запуск
 
-#### Первый запуск
 `scripts/install.sh`:
 - Проверяет наличие требуемых компонентов
-- Активирует виртуальное окружение Python3 и подгружает зависимости
-- Запускает Minikube с пробросом портов для Ingress, VictoriaMetrics, VictoriaLogs, Grafana
+- Создаёт виртуальное окружение Python и устанавливает необходимые зависимости
+- Запускает Minikube с пробросом HTTP-порта для Ingress
 - Собирает Docker-образ и подгружает его в Minikube
-- Вызывает `make k8s-apply`
+- Вызывает `make k8s-deploy`
+
+**Важно:**
+- Для генерации секретов Alertmanager требуются Telegram **токен бота** и **ID чата** _([инструкция](https://sitogon.ru/blog/252-kak-sozdat-telegram-bot-poluchit-ego-token-i-chat-id))_.
+- Установочный скрипт запросит их из **стандартного ввода**.
 
 ```bash
 bash scripts/install.sh
 ```
 
-#### Применение новых манифестов
-_Для применения манифестов Minikube должен быть запущен скриптом `scripts/install.sh`._
+#### Доступ к внутренним сервисам
+
+| Сервис            | Команда для проброса порта                                                                                |
+|-------------------|-----------------------------------------------------------------------------------------------------------|
+| Grafana           | `minikube kubectl -- -n observability port-forward svc/grafana 3000:3000`                                 |
+| VictoriaLogs      | `minikube kubectl -- -n observability port-forward svc/victorialogs 9428:9428`                            |
+| VictoriaMetrics   | `minikube kubectl -- -n observability port-forward svc/vmsingle-victoria-metrics-single-server 8428:8428` |
+| VMAlert           | `minikube kubectl -- -n observability port-forward svc/vmalert 8880:8880`                                 |
+| Alertmanager      | `minikube kubectl -- -n observability port-forward svc/alertmanager 9093:9093`                            |
+
+### Применение новых манифестов
+
+_Для применения манифестов в корне проекта должна находиться директория `.venv`, содержащая все модули из `scripts/requirements.txt`._
 
 ```bash
-source .venv/bin/activate
-make k8s-apply
+make k8s-deploy
 ```
 
-#### Сборка и загрузка нового изображения
+### Сборка и загрузка нового изображения
+
 ```bash
 make k8s-update-image
 ```
 
-### Docker Compose
+### Обслуживание
 
-**Требования:** Docker Engine, Docker Compose v2+, Make, Python 3 _(для генерации `.env`)_, Go 1.26+ _(для тестов)_.
+- **Очистка** - удаление истёкших сессий, ограничений запросов и незавершённых файловых операций. Автоматически выполняется каждые 15 минут.
+- **Аудит** - проверка согласованности метаданных PostgreSQL и объектов S3 без удаления данных.
+
+Ручной запуск:
 
 ```bash
-# Генерируем .env со случайными данными (выходит, если .env уже существует)
-make setup
-
-# Собираем и запускаем в Docker Compose
-make up
+make maintenance-cleanup
+make maintenance-audit
 ```
 
-### Пробер и SLI
+## Тестирование
+
+### Проверка кода
+
+Проверка форматирования Go, статический анализ (`go vet`), запуск Go-тестов и Python unit-тестов.
 
 ```bash
-make prober MODE=normal                          # 1 worker, файл 4 KiB
-make prober MODE=stress TARGET_URL=127.0.0.1     # 16 workers, файл 8 MiB
+make check
+```
+
+### Пробер
+
+- **Позволяет протестировать систему под _нормальной_ нагрузкой** - 1 worker шлёт не более одного запроса в секунду.
+- **Провести стресс-тестирование** - 16 worker'ов параллельно делают запросы без задержек между двумя последовательными запросами.
+
+```bash
+make probe MODE=normal                          # 1 worker, файл 4 KiB
+make probe MODE=stress TARGET_URL=127.0.0.1     # 16 worker'ов, файл 8 MiB
 ```

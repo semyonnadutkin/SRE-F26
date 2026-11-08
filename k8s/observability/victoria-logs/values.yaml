@@ -1,0 +1,22 @@
+serviceAccount:
+  create: true
+  automountToken: false
+
+server:
+  fullnameOverride: victorialogs
+  retentionPeriod: 7d
+
+  persistentVolume:
+    size: 5Gi
+
+  service:
+    type: ClusterIP
+    clusterIP: ""
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

@@ -1,0 +1,39 @@
+replicaCount: 1
+
+persistence:
+  enabled: true
+  size: 1Gi
+
+service:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+extraSecretMounts:
+  - name: telegram
+    mountPath: /etc/alertmanager/secrets/telegram
+    secretName: alertmanager-telegram
+    readOnly: true
+
+config:
+  global:
+    resolve_timeout: 5m
+
+  route:
+    receiver: telegram
+    group_by: [alertname, service, operation]
+    group_wait: 10s
+    group_interval: 1m
+    repeat_interval: 3h
+
+  receivers:
+    - name: telegram
+      telegram_configs:
+        - bot_token_file: /etc/alertmanager/secrets/telegram/bot_token
+          chat_id_file: /etc/alertmanager/secrets/telegram/chat_id
+          send_resolved: true
