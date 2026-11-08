@@ -1,0 +1,276 @@
+
+server:
+  config:
+    alerts:
+      groups:
+        - name: fileserver-sli
+          interval: 30s
+          rules:
+            - alert: FileServerAuthSuccessLow
+              expr: |
+                (
+                  100 *
+                  (
+                    sum by (operation) (
+                      increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome="success"}[5m])
+                    )
+                    or on (operation)
+                    (
+                      0 * sum by (operation) (
+                        increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                      )
+                    )
+                  )
+                  /
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                  )
+                ) < 99
+                and on (operation)
+                (
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                  ) >= 5
+                )
+              for: 2m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: 'Low success rate: {{ $labels.operation }}'
+                description: 'Successful operations over 5m: {{ printf "%.2f" $value }}%; target: 99%.'
+
+            - alert: FileServerUploadSuccessLow
+              expr: |
+                (
+                  100 *
+                  (
+                    sum by (operation) (
+                      increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation="upload",outcome="success"}[5m])
+                    )
+                    or on (operation)
+                    (
+                      0 * sum by (operation) (
+                        increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation="upload",outcome=~"success|failed"}[5m])
+                      )
+                    )
+                  )
+                  /
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation="upload",outcome=~"success|failed"}[5m])
+                  )
+                ) < 99.5
+                and on (operation)
+                (
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation="upload",outcome=~"success|failed"}[5m])
+                  ) >= 5
+                )
+              for: 2m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: 'Low success rate: {{ $labels.operation }}'
+                description: 'Successful operations over 5m: {{ printf "%.2f" $value }}%; target: 99.5%.'
+
+            - alert: FileServerSessionDownloadSuccessLow
+              expr: |
+                (
+                  100 *
+                  (
+                    sum by (operation) (
+                      increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"logout|download",outcome="success"}[5m])
+                    )
+                    or on (operation)
+                    (
+                      0 * sum by (operation) (
+                        increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"logout|download",outcome=~"success|failed"}[5m])
+                      )
+                    )
+                  )
+                  /
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"logout|download",outcome=~"success|failed"}[5m])
+                  )
+                ) < 99.9
+                and on (operation)
+                (
+                  sum by (operation) (
+                    increase(fileserver_operations_total{job="fileserver-pods",app="fileserver",operation=~"logout|download",outcome=~"success|failed"}[5m])
+                  ) >= 5
+                )
+              for: 2m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: 'Low success rate: {{ $labels.operation }}'
+                description: 'Successful operations over 5m: {{ printf "%.2f" $value }}%; target: 99.9%.'
+
+            - alert: FileServerFastAuthSuccessLow
+              expr: |
+                (
+                  100 *
+                  (
+                    sum by (operation) (
+                      increase(fileserver_operation_duration_seconds_bucket{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome="success",le="1"}[5m])
+                    )
+                    or on (operation)
+                    (
+                      0 * sum by (operation) (
+                        increase(fileserver_operation_duration_seconds_count{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                      )
+                    )
+                  )
+                  /
+                  sum by (operation) (
+                    increase(fileserver_operation_duration_seconds_count{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                  )
+                ) < 99
+                and on (operation)
+                (
+                  sum by (operation) (
+                    increase(fileserver_operation_duration_seconds_count{job="fileserver-pods",app="fileserver",operation=~"login|register",outcome=~"success|failed"}[5m])
+                  ) >= 5
+                )
+              for: 2m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: 'Low fast-success rate: {{ $labels.operation }}'
+                description: 'Successful operations within 1s over 5m: {{ printf "%.2f" $value }}%; target: 99%.'
+
+            - alert: FileServerServerErrors
+              expr: |
+                sum(increase(fileserver_operations_total{
+                  job="fileserver-pods",app="fileserver",status=~"5.."
+                }[5m])) >= 3
+              for: 2m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: "FileServer returned HTTP 5xx"
+                description: 'FileServer returned {{ printf "%.0f" $value }} HTTP 5xx responses in the last 5m.'
+
+        - name: fileserver-runtime
+          interval: 30s
+          rules:
+            - alert: FileServerMemoryHigh
+              expr: |
+                process_resident_memory_bytes{
+                  job="fileserver-pods",
+                  app="fileserver"
+                } > 400 * 1024 * 1024
+              for: 5m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: "FileServer memory usage is high"
+                description: 'Pod {{ $labels.pod }}: RSS {{ $value | humanize1024 }}B; threshold 400 MiB.'
+
+            - alert: FileServerGoroutinesHigh
+              expr: |
+                go_goroutines{
+                  job="fileserver-pods",
+                  app="fileserver"
+                } > 200
+              for: 5m
+              labels:
+                severity: warning
+                service: fileserver
+                namespace: fileserver
+              annotations:
+                summary: "FileServer goroutine count is high"
+                description: 'Pod {{ $labels.pod }}: {{ $value }} goroutines; threshold 200.'
+
+        - name: fileserver-dependencies
+          interval: 30s
+          rules:
+            - alert: FileServerS3ServerErrors
+              expr: |
+                sum(increase(SeaweedFS_s3_request_total{
+                  job="fileserver-pods",app="s3",code=~"5.."
+                }[5m])) >= 3
+              for: 2m
+              labels:
+                severity: warning
+                service: s3
+                namespace: fileserver
+              annotations:
+                summary: "S3 returns HTTP 5xx"
+                description: 'SeaweedFS returned {{ printf "%.0f" $value }} HTTP 5xx responses in the last 5m.'
+
+            - alert: FileServerS3MetadataSlow
+              expr: |
+                histogram_quantile(
+                  0.95,
+                  sum by (le, type) (
+                    rate(SeaweedFS_filerStore_request_seconds_bucket{
+                      job="fileserver-pods",app="s3",store="leveldb2"
+                    }[5m])
+                  )
+                ) > 0.1
+                and on (type)
+                sum by (type) (
+                  increase(SeaweedFS_filerStore_request_seconds_count{
+                    job="fileserver-pods",app="s3",store="leveldb2"
+                  }[5m])
+                ) >= 20
+              for: 2m
+              labels:
+                severity: warning
+                service: s3
+                namespace: fileserver
+              annotations:
+                summary: 'Slow SeaweedFS metadata operation: {{ $labels.type }}'
+                description: 'Filer store p95 for {{ $labels.type }} is {{ printf "%.3f" $value }}s (threshold 0.1s).'
+
+            - alert: FileServerS3ReadOnlyVolumes
+              expr: |
+                sum by (pod) (SeaweedFS_volumeServer_read_only_volumes{
+                  job="fileserver-pods",app="s3"
+                }) > 0
+              for: 1m
+              labels:
+                severity: critical
+                service: s3
+                namespace: fileserver
+              annotations:
+                summary: "SeaweedFS volume is read-only"
+                description: 'Pod {{ $labels.pod }} has {{ $value }} read-only volumes; writes may fail.'
+
+            - alert: FileServerPostgresDeadlocks
+              expr: |
+                increase(pg_stat_database_deadlocks{
+                  job="fileserver-pods",app="postgres",datname="fileserver"
+                }[10m]) > 0
+              for: 1m
+              labels:
+                severity: warning
+                service: postgres
+                namespace: fileserver
+              annotations:
+                summary: "PostgreSQL deadlocks detected"
+                description: 'Database {{ $labels.datname }}: {{ printf "%.0f" $value }} deadlock(s) in the last 10m.'
+
+            - alert: FileServerPostgresUnavailable
+              expr: |
+                pg_up{job="fileserver-pods",app="postgres"} == 0
+              for: 1m
+              labels:
+                severity: critical
+                service: postgres
+                namespace: fileserver
+              annotations:
+                summary: "PostgreSQL connection failed"
+                description: 'postgres-exporter cannot connect to PostgreSQL (pg_up=0).'

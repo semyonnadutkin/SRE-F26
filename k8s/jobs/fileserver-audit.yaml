@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: fileserver-audit
+  generateName: fileserver-audit-
   namespace: fileserver
 spec:
   backoffLimit: 3
