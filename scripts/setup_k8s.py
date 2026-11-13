@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
-"""Create private secret.yaml files per service; preserve existing credentials."""
+"""Create Kubernetes Secrets directly via kubectl, keeping existing credentials."""
 import argparse
-import fcntl
+import base64
 import json
-import os
-from pathlib import Path
 import secrets
-import tempfile
+import shlex
+import subprocess
 from urllib.parse import urlsplit
 
-import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DIRECTORY = ROOT / 'k8s'
-SECRET_PATHS = {
-    'postgres-secret': Path('postgres/secret.yaml'),
-    'fileserver-secret': Path('fileserver/secret.yaml'),
-    's3-secret': Path('s3/secret.yaml'),
+SERVICE_KEYS = {
+    'postgres-secret': {'POSTGRES_PASSWORD', 'DATABASE_URL'},
+    'fileserver-secret': {'DATABASE_URL'},
+    's3-secret': {'S3_ACCESS_KEY', 'S3_SECRET_KEY'},
 }
 
 
-def new_bundle():
-    password = secrets.token_hex(32)
+def manifest(name, namespace, data):
+    return {'apiVersion': 'v1', 'kind': 'Secret',
+            'metadata': {'name': name, 'namespace': namespace},
+            'type': 'Opaque', 'stringData': data}
+
+
+def new_bundle(password=None):
+    password = password or secrets.token_hex(32)
     values = {
         'postgres-secret': {
             'POSTGRES_PASSWORD': password,
@@ -39,15 +41,12 @@ def new_bundle():
         },
     }
     return {'apiVersion': 'v1', 'kind': 'List', 'items': [
-        {'apiVersion': 'v1', 'kind': 'Secret',
-         'metadata': {'name': name, 'namespace': 'fileserver'},
-         'type': 'Opaque', 'stringData': data}
-        for name, data in values.items()
+        manifest(name, 'fileserver', data) for name, data in values.items()
     ]}
 
 
-def validate_bundle(bundle, *, allow_legacy=False):
-    """Validate credentials without printing them or changing existing values."""
+def validate_bundle(bundle):
+    """Reject inconsistent credentials before creating any missing Secrets."""
     def require(condition):
         if not condition:
             raise ValueError('Invalid bundle')
@@ -57,22 +56,13 @@ def validate_bundle(bundle, *, allow_legacy=False):
         items = bundle['items']
         require(len(items) == 3)
         by_name = {item['metadata']['name']: item for item in items}
-        keys = {
-            'postgres-secret': {'POSTGRES_PASSWORD', 'DATABASE_URL'},
-            'fileserver-secret': {'DATABASE_URL'},
-            's3-secret': {'S3_ACCESS_KEY', 'S3_SECRET_KEY'},
-        }
-        require(set(by_name) == set(keys))
-
+        require(set(by_name) == set(SERVICE_KEYS))
         for name, item in by_name.items():
             require(item['apiVersion'] == 'v1' and item['kind'] == 'Secret')
             require(item['metadata']['namespace'] == 'fileserver')
             require(item['type'] == 'Opaque')
             data = item['stringData']
-            expected = keys[name]
-            if allow_legacy and name == 'postgres-secret' and 'DATABASE_URL' not in data:
-                expected = {'POSTGRES_PASSWORD'}
-            require(set(data) == expected)
+            require(set(data) == SERVICE_KEYS[name])
             require(all(isinstance(value, str) and value for value in data.values()))
 
         postgres = by_name['postgres-secret']['stringData']
@@ -80,13 +70,9 @@ def validate_bundle(bundle, *, allow_legacy=False):
         password = postgres['POSTGRES_PASSWORD']
         for value in (password, s3['S3_ACCESS_KEY'], s3['S3_SECRET_KEY']):
             require(len(value) >= 32 and all(c in '0123456789abcdef' for c in value))
-
         for name, host in (('postgres-secret', '127.0.0.1'),
                            ('fileserver-secret', 'postgres')):
-            data = by_name[name]['stringData']
-            if allow_legacy and name == 'postgres-secret' and 'DATABASE_URL' not in data:
-                continue
-            raw_url = data['DATABASE_URL']
+            raw_url = by_name[name]['stringData']['DATABASE_URL']
             require(not any(c.isspace() for c in raw_url))
             url = urlsplit(raw_url)
             require((url.scheme, url.username, url.password, url.hostname,
@@ -94,166 +80,106 @@ def validate_bundle(bundle, *, allow_legacy=False):
                 'postgres', 'fileserver', password, host, 5432,
                 '/fileserver', 'sslmode=disable', ''))
     except (KeyError, TypeError, ValueError, AttributeError):
-        raise ValueError('Invalid Kubernetes secret bundle; restore the original file. '
-                         'Credentials were not changed or printed.') from None
+        raise ValueError('Invalid Kubernetes Secrets; credentials were not overwritten.') from None
 
 
-def write_secret(path, manifest, *, replace_existing=False):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_symlink():
-        raise ValueError('Secret files must not be symbolic links.')
-    descriptor, temporary = tempfile.mkstemp(prefix='.secret-', suffix='.yaml', dir=path.parent)
+class Kubectl:
+    def __init__(self, command):
+        self.command = shlex.split(command)
+        if not self.command:
+            raise ValueError('kubectl command must not be empty.')
+
+    def run(self, *args, payload=None):
+        try:
+            result = subprocess.run(
+                [*self.command, *args], input=payload if payload is not None else '',
+                text=True, capture_output=True, check=True, timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # kubectl errors can include the submitted Secret. Never echo them.
+            raise ValueError('kubectl failed; check cluster access and permissions, then retry.') from None
+        return result.stdout
+
+    def get_secret(self, namespace, name):
+        output = self.run('-n', namespace, 'get', 'secret', name,
+                          '--ignore-not-found', '-o', 'json')
+        if not output.strip():
+            return None
+        try:
+            item = json.loads(output)
+            if (item['apiVersion'] != 'v1' or item['kind'] != 'Secret'
+                    or item['metadata']['name'] != name
+                    or item['metadata']['namespace'] != namespace
+                    or item['type'] != 'Opaque'):
+                raise ValueError
+            data = {key: base64.b64decode(value, validate=True).decode('utf-8')
+                    for key, value in item['data'].items()}
+            return manifest(name, namespace, data)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise ValueError('Invalid Kubernetes Secret response.') from None
+
+    def create_secret(self, item):
+        # create prevents a concurrent setup from overwriting existing credentials.
+        self.run('create', '-f', '-', payload=json.dumps(item))
+
+
+def setup(kubectl):
+    existing = {name: kubectl.get_secret('fileserver', name) for name in SERVICE_KEYS}
+    password = None
     try:
-        with os.fdopen(descriptor, 'w') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            yaml.safe_dump(manifest, stream, sort_keys=False)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if replace_existing:
-            os.replace(temporary, path)
-        else:
-            os.link(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def setup(directory):
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    # Serialize the three-file transaction. No persistent lock file is necessary.
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        return setup_locked(directory)
-    finally:
-        os.close(descriptor)
-
-
-def setup_locked(directory):
-    legacy = directory / 'generated/secrets.json'
-    paths = {name: directory / relative for name, relative in SECRET_PATHS.items()}
-    if any(path.is_symlink() for path in [legacy, *paths.values()]):
-        raise ValueError('Secret files must not be symbolic links.')
-    existing = {name: yaml.safe_load(path.read_text())
-                for name, path in paths.items() if path.exists()}
-
-    def upgrade(bundle):
-        validate_bundle(bundle, allow_legacy=True)
-        # Copy so comparison with the original YAML still detects changes.
-        bundle = json.loads(json.dumps(bundle))
-        for item in bundle['items']:
-            if item['metadata']['name'] == 'postgres-secret':
-                data = item['stringData']
-                password = data['POSTGRES_PASSWORD']
-                data.setdefault('DATABASE_URL', (
-                    f'postgres://fileserver:{password}'
-                    '@127.0.0.1:5432/fileserver?sslmode=disable'
-                ))
-        validate_bundle(bundle)
-        return bundle
-
-    if legacy.exists():
-        bundle = upgrade(json.loads(legacy.read_text()))
-        expected = {item['metadata']['name']: item for item in bundle['items']}
-        candidate = {'apiVersion': 'v1', 'kind': 'List', 'items': [
-            existing.get(name, expected[name]) for name in paths
-        ]}
-        candidate = upgrade(candidate)
-        actual = {item['metadata']['name']: item for item in candidate['items']}
-        if actual != expected:
-            raise ValueError('YAML secrets disagree with the legacy bundle.')
-    elif len(existing) == len(paths):
-        bundle = upgrade({'apiVersion': 'v1', 'kind': 'List',
-                          'items': list(existing.values())})
-    elif existing:
-        raise ValueError('Incomplete secret set; restore the missing original files.')
-    else:
-        bundle = new_bundle()
-
+        if existing['postgres-secret'] is not None:
+            password = existing['postgres-secret']['stringData']['POSTGRES_PASSWORD']
+        elif existing['fileserver-secret'] is not None:
+            password = urlsplit(existing['fileserver-secret']['stringData']['DATABASE_URL']).password
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('Invalid existing database credentials.') from None
+    bundle = new_bundle(password)
+    bundle['items'] = [existing[item['metadata']['name']] or item for item in bundle['items']]
     validate_bundle(bundle)
-    if any(manifest['metadata']['name'] != name for name, manifest in existing.items()):
-        raise ValueError('Secret manifests are in the wrong service directories.')
-
-    changed = False
-    for manifest in bundle['items']:
-        name = manifest['metadata']['name']
-        if name not in existing or existing[name] != manifest:
-            write_secret(paths[name], manifest, replace_existing=name in existing)
-            changed = True
-        paths[name].chmod(0o600)
-
-    if legacy.exists():
-        legacy.unlink()
-        if not any(legacy.parent.iterdir()):
-            legacy.parent.rmdir()
-    return changed
+    created = 0
+    for item in bundle['items']:
+        if existing[item['metadata']['name']] is None:
+            kubectl.create_secret(item)
+            created += 1
+    return created
 
 
-def setup_telegram(directory):
-    """Create the Alertmanager Telegram Secret only once."""
-    path = Path(directory) / 'observability/alertmanager/secret.yaml'
-    if path.is_symlink():
-        raise ValueError('Telegram Secret must not be a symbolic link.')
-
-    if path.exists():
-        manifest = yaml.safe_load(path.read_text())
-        if (not isinstance(manifest, dict)
-                or manifest.get('kind') != 'Secret'
-                or manifest.get('metadata') != {
-                    'name': 'alertmanager-telegram',
-                    'namespace': 'observability',
-                }):
-            raise ValueError('Invalid existing Telegram Secret.')
-        credentials = manifest.get('stringData')
-        if not isinstance(credentials, dict):
-            raise ValueError('Invalid existing Telegram credentials.')
-    else:
-        credentials = {
-            'bot_token': input('Telegram bot token: ').strip(),
-            'chat_id': input('Telegram Chat ID: ').strip(),
-        }
-
+def setup_telegram(kubectl):
+    existing = kubectl.get_secret('observability', 'alertmanager-telegram')
+    credentials = existing['stringData'] if existing is not None else {
+        'bot_token': input('Telegram bot token: ').strip(),
+        'chat_id': input('Telegram Chat ID: ').strip(),
+    }
     token = credentials.get('bot_token')
     chat_id = credentials.get('chat_id')
     if (not isinstance(token, str) or not token
             or not isinstance(chat_id, str)
-            or not chat_id.lstrip('-').isdigit()
+            or not chat_id.removeprefix('-').isascii()
+            or not chat_id.removeprefix('-').isdigit()
             or int(chat_id) == 0):
         raise ValueError('Invalid Telegram bot token or Chat ID.')
-
-    if not path.exists():
-        write_secret(path, {
-            'apiVersion': 'v1',
-            'kind': 'Secret',
-            'metadata': {
-                'name': 'alertmanager-telegram',
-                'namespace': 'observability',
-            },
-            'type': 'Opaque',
-            'stringData': credentials,
-        })
-        print('Telegram Secret created (0600).')
-    else:
-        path.chmod(0o600)
-        print('Existing Telegram Secret kept.')
+    if existing is None:
+        kubectl.create_secret(manifest('alertmanager-telegram', 'observability', credentials))
+        return True
+    return False
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--directory', type=Path, default=DEFAULT_DIRECTORY)
+    parser.add_argument('--kubectl', required=True, help='kubectl command supplied by Makefile')
+    parser.add_argument('--only', choices=('services', 'telegram', 'all'), default='all')
     args = parser.parse_args()
     try:
-        created = setup(args.directory)
-    except (OSError, ValueError, yaml.YAMLError):
-        # JSON decoder errors and OS errors can contain input; do not echo them.
-        raise SystemExit('Cannot create or validate Kubernetes secrets. Check permissions '
-                         'or restore the original files; existing credentials were not overwritten.') from None
-    print('Service secret.yaml files created (0600).' if created else 'Existing YAML secrets validated and kept.')
-    try:
-        setup_telegram(args.directory)
-    except (OSError, ValueError, yaml.YAMLError, EOFError):
-        raise SystemExit('Cannot create or validate Telegram Secret; check credentials or file.') from None
+        kubectl = Kubectl(args.kubectl)
+        if args.only in ('services', 'all'):
+            count = setup(kubectl)
+            print(f'Service Secrets created: {count}; existing credentials kept.')
+        if args.only in ('telegram', 'all'):
+            created = setup_telegram(kubectl)
+            print('Telegram Secret created.' if created else 'Existing Telegram Secret kept.')
+    except (OSError, ValueError, EOFError):
+        raise SystemExit('Cannot prepare Kubernetes Secrets. Check cluster access, '
+                         'permissions and credentials; existing Secrets were not overwritten.') from None
 
 
 if __name__ == '__main__':

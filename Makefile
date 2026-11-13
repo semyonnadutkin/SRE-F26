@@ -1,4 +1,5 @@
 .PHONY: check probe maintenance-cleanup maintenance-audit \
+        setup-image probe-image check-scripts k8s-secrets \
         helm-repos k8s-bootstrap k8s-deploy k8s-update-image \
         k8s-deploy-victorialogs k8s-deploy-vector \
         k8s-deploy-grafana k8s-deploy-victoriametrics \
@@ -6,9 +7,21 @@
 
 KUBECTL ?= minikube kubectl --
 HELM ?= helm
-PYTHON ?= .venv/bin/python
+DOCKER ?= docker
+SETUP_IMAGE ?= sre-f26-setup:local
+# The container has kubectl; the host can keep using minikube kubectl.
+SETUP_KUBECTL ?= kubectl --context=minikube --cache-dir=/tmp/kubectl-cache
+KUBECONFIG ?= $(HOME)/.kube/config
+SETUP_DOCKER_ARGS ?=
+SETUP_RUN = $(DOCKER) run --rm -i --network=host \
+	--user "$$(id -u):$$(id -g)" --read-only --tmpfs /tmp \
+	--env HOME="$(HOME)" --env KUBECONFIG="$(KUBECONFIG)" \
+	--mount "type=bind,src=$(HOME)/.kube,dst=$(HOME)/.kube,readonly" \
+	--mount "type=bind,src=$(HOME)/.minikube,dst=$(HOME)/.minikube,readonly" \
+	$(SETUP_DOCKER_ARGS) $(SETUP_IMAGE)
 
 # Prober-related values
+PROBER_IMAGE ?= sre-f26-prober:local
 MODE ?= normal
 TARGET_URL ?= 127.0.0.1
 export TARGET_URL
@@ -37,14 +50,24 @@ AM_VALUES_FILE := k8s/observability/alertmanager/values.yaml
 VMA_CHART_VERSION := 0.50.0
 VMA_VALUES_DIR := k8s/observability/vmalert
 
-check:
+check: check-scripts
 	@test -z "$$(gofmt -l cmd internal migrations)"
 	go vet ./...
 	go test ./...
-	$(PYTHON) -m unittest discover -s scripts -p 'test_*.py'
 
-probe:
-	$(PYTHON) scripts/prober/main.py $(MODE)
+setup-image:
+	$(DOCKER) build -t "$(SETUP_IMAGE)" scripts
+
+check-scripts: setup-image
+	$(DOCKER) run --rm --network=none --read-only --tmpfs /tmp "$(SETUP_IMAGE)" \
+		python -m unittest discover -s scripts -p 'test_*.py'
+
+probe-image:
+	$(DOCKER) build -t "$(PROBER_IMAGE)" scripts/prober
+
+probe: probe-image
+	$(DOCKER) run --rm --init --read-only --tmpfs /tmp --stop-timeout=60 \
+		--network=host --env TARGET_URL "$(PROBER_IMAGE)" $(MODE)
 
 # Run cleanup immediately using the existing CronJob template.
 maintenance-cleanup:
@@ -74,14 +97,17 @@ maintenance-audit:
 	$(KUBECTL) -n fileserver logs "$$job" || true; \
 	exit "$$status"
 
-# Prepare databases, storage and initialization Jobs.
-k8s-bootstrap:
-	$(PYTHON) scripts/setup_k8s.py
+# Store credentials directly in the cluster; never generate local manifests.
+k8s-secrets: setup-image
 	$(KUBECTL) apply -f k8s/namespace.yaml
+	$(KUBECTL) apply -f k8s/observability/namespace.yaml
+	$(SETUP_RUN) python scripts/setup_k8s.py --kubectl "$(SETUP_KUBECTL)"
+
+# First installation only: prepare databases, storage and initialization Jobs.
+k8s-bootstrap: k8s-secrets
 	$(KUBECTL) apply -k k8s/postgres
 	$(KUBECTL) apply -k k8s/s3
-	$(KUBECTL) apply -f k8s/fileserver/configmap.yaml \
-		-f k8s/fileserver/secret.yaml
+	$(KUBECTL) apply -f k8s/fileserver/configmap.yaml
 	$(KUBECTL) -n fileserver rollout status statefulset/postgres --timeout=300s
 	$(KUBECTL) -n fileserver rollout status statefulset/s3 --timeout=300s
 	$(KUBECTL) -n fileserver delete job \
@@ -142,13 +168,13 @@ k8s-deploy-grafana:
 		--reset-values \
 		-f "$(GF_DIR)/values.yaml" \
 		--set-file dashboards.fileserver.fileserver-logs.json="$(GF_DIR)/dashboards/fileserver-logs.json" \
-		--set-file dashboards.fileserver.fileserver-slo.json="$(GF_DIR)/dashboards/fileserver-slo.json" \
+		--set-file dashboards.fileserver.fileserver-slo.json="$(GF_DIR)/dashboards/fileserver.json" \
+		--set-file dashboards.postgresql.postgresql-exporter.json="$(GF_DIR)/dashboards/postgresql-exporter.json" \
+		--set-file dashboards.seaweedfs.seaweedfs.json="$(GF_DIR)/dashboards/seaweedfs.json" \
 		--rollback-on-failure --wait --timeout 5m
 
 k8s-deploy-alertmanager:
-	$(PYTHON) scripts/setup_k8s.py
 	$(KUBECTL) apply -f k8s/observability/namespace.yaml
-	$(KUBECTL) apply -f k8s/observability/alertmanager/secret.yaml
 	$(HELM) upgrade --install alertmanager prometheus-community/alertmanager \
 		--version "$(AM_CHART_VERSION)" \
 		--kube-context minikube \
@@ -174,7 +200,8 @@ k8s-update-image:
 	$(KUBECTL) -n fileserver rollout restart deployment/fileserver-deployment
 	$(KUBECTL) -n fileserver rollout status deployment/fileserver-deployment --timeout=300s
 
-k8s-deploy: k8s-bootstrap
+# Apply workloads without rerunning setup or initialization Jobs.
+k8s-deploy:
 	$(KUBECTL) apply -k k8s
 	$(KUBECTL) -n fileserver rollout restart deployment/fileserver-deployment
 	$(KUBECTL) -n fileserver rollout status deployment/fileserver-deployment --timeout=300s

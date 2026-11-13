@@ -3,7 +3,13 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookiejar import CookieJar
 import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import HTTPCookieProcessor, build_opener
@@ -126,6 +132,36 @@ class ProberTest(unittest.TestCase):
         self.assertEqual((prober.workers, prober.delay), (16, 0))
         self.cycle(prober)
         self.assertEqual(self.uploads, [(8 * 1024 * 1024, prober.digest)])
+
+    def test_cli_modes_and_shutdown_signals_clean_up_files(self):
+        script = os.environ.get('PROBER_SCRIPT', str(Path(__file__).parent / 'prober/main.py'))
+        for mode in ('normal', 'stress'):
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                with self.subTest(mode=mode, signal=sig.name):
+                    uploads_before = len(self.uploads)
+                    process = subprocess.Popen(
+                        [sys.executable, script, mode],
+                        env={**os.environ, 'TARGET_URL': self.target},
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    )
+                    try:
+                        deadline = time.monotonic() + 10
+                        while len(self.uploads) == uploads_before and process.poll() is None:
+                            if time.monotonic() >= deadline:
+                                self.fail('Prober did not upload a reference file')
+                            time.sleep(0.01)
+                        process.send_signal(sig)
+                        stdout, stderr = process.communicate(timeout=10)
+                        self.assertEqual(process.returncode, 0, stderr)
+                        self.assertEqual(stderr, '')
+                        self.assertIn(f'target={self.target}', stdout)
+                        self.assertIn('workers=1 ' if mode == 'normal' else 'workers=16 ', stdout)
+                        self.assertGreater(len(self.uploads), uploads_before)
+                        self.assertEqual(self.files, {})
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                            process.communicate()
 
     def test_corrupt_download_is_failure_and_file_is_deleted(self):
         prober = Prober(self.target, "normal")
