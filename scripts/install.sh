@@ -11,7 +11,7 @@ function err_not_found()
 
 
 # Check for the needed components
-for component in make python3 minikube helm docker; do
+for component in make minikube helm docker; do
     if ! command -v "$component" >/dev/null 2>&1; then
         err_not_found "$component"
         exit 1
@@ -22,11 +22,6 @@ if ! docker info >/dev/null 2>&1; then
     echo "Docker daemon is unavailable or permission is denied" >&2
     exit 1
 fi
-
-
-# Install the setup dependencies
-python3 -m venv .venv
-.venv/bin/python -m pip install -r scripts/requirements.txt
 
 
 # Start the cluster
@@ -57,5 +52,6 @@ docker build -t sre-f26-fileserver:local .
 minikube image load sre-f26-fileserver:local
 
 
-# Deploy the FileServer
+# Initialize and deploy
+make k8s-bootstrap
 make k8s-deploy

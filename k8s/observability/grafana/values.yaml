@@ -38,8 +38,6 @@ env:
   GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.27.1
   GF_AUTH_ANONYMOUS_ENABLED: "true"
   GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-  GF_AUTH_DISABLE_LOGIN_FORM: "true"
-  GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "true"
 
 datasources:
   datasources.yaml:
@@ -50,7 +48,6 @@ datasources:
         type: victoriametrics-logs-datasource
         access: proxy
         url: http://victorialogs.observability.svc.cluster.local:9428
-        isDefault: true
         editable: false
 
       - name: VictoriaMetrics
@@ -58,10 +55,8 @@ datasources:
         type: prometheus
         access: proxy
         url: http://vmsingle-victoria-metrics-single-server.observability.svc.cluster.local:8428
-        editable: false
-        jsonData:
-          timeInterval: 15s
-          httpMethod: POST
+        isDefault: true
+        editable: true
 
 dashboardProviders:
   providers.yaml:
@@ -71,7 +66,26 @@ dashboardProviders:
         orgId: 1
         folder: FileServer
         type: file
+        allowUiUpdates: true
         disableDeletion: true
-        editable: false
+        editable: true
         options:
           path: /var/lib/grafana/dashboards/fileserver
+
+      - name: postgresql
+        orgId: 1
+        folder: PostgreSQL
+        type: file
+        disableDeletion: true
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/postgresql
+
+      - name: seaweedfs
+        orgId: 1
+        folder: SeaweedFS
+        type: file
+        disableDeletion: true
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/seaweedfs

@@ -27,16 +27,16 @@
 
 ## Запуск
 
-**Требования:** Bash, Minikube 1.39.0+, Helm, Docker, Make, Python3.
+**Требования:** Bash, Minikube 1.39.0+, Helm, Docker, Make.
 
 ### Первый запуск
 
 `scripts/install.sh`:
 - Проверяет наличие требуемых компонентов
-- Создаёт виртуальное окружение Python и устанавливает необходимые зависимости
 - Запускает Minikube с пробросом HTTP-порта для Ingress
 - Собирает Docker-образ и подгружает его в Minikube
-- Вызывает `make k8s-deploy`
+- Вызывает `make k8s-bootstrap` и `make k8s-deploy`
+- Генерирует секреты и загружает их в `kubectl`
 
 **Важно:**
 - Для генерации секретов Alertmanager требуются Telegram **токен бота** и **ID чата** _([инструкция](https://sitogon.ru/blog/252-kak-sozdat-telegram-bot-poluchit-ego-token-i-chat-id))_.
@@ -57,8 +57,6 @@ bash scripts/install.sh
 | Alertmanager      | `minikube kubectl -- -n observability port-forward svc/alertmanager 9093:9093`                            |
 
 ### Применение новых манифестов
-
-_Для применения манифестов в корне проекта должна находиться директория `.venv`, содержащая все модули из `scripts/requirements.txt`._
 
 ```bash
 make k8s-deploy
