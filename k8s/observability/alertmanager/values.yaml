@@ -37,3 +37,22 @@ config:
         - bot_token_file: /etc/alertmanager/secrets/telegram/bot_token
           chat_id_file: /etc/alertmanager/secrets/telegram/chat_id
           send_resolved: true
+
+  inhibit_rules:
+    - source_matchers:
+        - 'alertname="FileServerPostgresUnavailable"'
+        - 'severity="critical"'
+      target_matchers:
+        - 'service="fileserver"'
+        - 'severity="warning"'
+        - 'alertname=~"FileServer(AuthSuccessLow|FastAuthSuccessLow|UploadSuccessLow|SessionDownloadSuccessLow|ServerErrors)"'
+      equal: [namespace]
+
+    - source_matchers:
+        - 'alertname="FileServerS3Unavailable"'
+        - 'severity="critical"'
+      target_matchers:
+        - 'service="fileserver"'
+        - 'severity="warning"'
+        - 'operation=~"upload|download"'
+      equal: [namespace]
