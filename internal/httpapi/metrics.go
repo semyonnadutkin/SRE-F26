@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -76,6 +77,11 @@ var (
 		},
 		[]string{"operation", "outcome", "status"},
 	)
+
+	s3Up = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "fileserver_s3_up",
+		Help: "Whether the configured S3 bucket is reachable.",
+	})
 )
 
 func trackOperation(
@@ -114,6 +120,29 @@ func trackOperation(
 
 		if panicValue != nil {
 			panic(panicValue)
+		}
+	}
+}
+
+func (a *API) MonitorS3(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := a.Store.Ready(checkCtx)
+		cancel()
+
+		if err != nil {
+			s3Up.Set(0)
+		} else {
+			s3Up.Set(1)
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

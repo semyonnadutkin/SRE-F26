@@ -77,6 +77,8 @@ func run(logger *slog.Logger) error {
 	}
 
 	api := &httpapi.API{DB: pool, Store: store, Config: cfg, Log: logger}
+	go api.MonitorS3(ctx)
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           httpapi.NewHandler(api),

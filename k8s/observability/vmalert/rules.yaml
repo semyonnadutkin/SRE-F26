@@ -249,10 +249,24 @@ server:
                 summary: "SeaweedFS volume is read-only"
                 description: 'Pod {{ $labels.pod }} has {{ $value }} read-only volumes; writes may fail.'
 
+            - alert: FileServerS3Unavailable
+              expr: |
+                max(fileserver_s3_up{job="fileserver-pods",app="fileserver"}) == 0
+                or
+                absent(fileserver_s3_up{job="fileserver-pods",app="fileserver"})
+              for: 1m
+              labels:
+                severity: critical
+                service: s3
+                namespace: fileserver
+              annotations:
+                summary: "S3 availability check failed"
+                description: "S3 is unreachable or its availability metric is missing."
+
             - alert: FileServerPostgresDeadlocks
               expr: |
                 increase(pg_stat_database_deadlocks{
-                  job="fileserver-pods",app="postgres",datname="fileserver"
+                  job="postgres-exporter",app="postgres",datname="fileserver"
                 }[10m]) > 0
               for: 1m
               labels:
@@ -265,12 +279,14 @@ server:
 
             - alert: FileServerPostgresUnavailable
               expr: |
-                pg_up{job="fileserver-pods",app="postgres"} == 0
+                max(pg_up{job="postgres-exporter",app="postgres"}) == 0
+                or
+                absent(pg_up{job="postgres-exporter",app="postgres"})
               for: 1m
               labels:
                 severity: critical
                 service: postgres
                 namespace: fileserver
               annotations:
-                summary: "PostgreSQL connection failed"
-                description: 'postgres-exporter cannot connect to PostgreSQL (pg_up=0).'
+                summary: "PostgreSQL availability check failed"
+                description: "PostgreSQL is unreachable or pg_up is missing."
